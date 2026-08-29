@@ -134,7 +134,7 @@ class PostTrainingVisualizer:
                         original_labels = sorted(labels_csv.iloc[:, 0].unique())
                         
                         # Load label mapping JSON
-                        with open(label_mapping_file, 'r') as f:
+                        with open(label_mapping_file, 'r', encoding='utf-8') as f:
                             label_mapping = json.load(f)
                         
                         # Create corrected mapping from training index to ecotype name
@@ -687,7 +687,7 @@ class PostTrainingVisualizer:
             filename: Output filename
         """
         output_file = self.output_dir / filename
-        with open(output_file, 'w') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(metrics_dict, f, indent=2)
         
         print(f"✓ Saved visualization metrics: {output_file.name}")

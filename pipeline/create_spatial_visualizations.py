@@ -9,7 +9,7 @@ Creates 4 visualization types per patient:
 3. Neighborhood Analysis (6-panel: Per-ecotype Moran's I + summary)
 4. 3D Tissue Landscape (Interactive HTML: X,Y tissue × Z cell composition)
 
-Author: Spatial Visualization Pipeline
+Author: FYP-Modular Pipeline
 Date: March 2026
 """
 
@@ -30,7 +30,6 @@ import plotly.graph_objects as go
 
 # For spatial statistics
 from sklearn.neighbors import NearestNeighbors
-from sklearn.decomposition import PCA
 
 warnings.filterwarnings('ignore')
 
@@ -54,14 +53,27 @@ LABEL_MAPPING_FILE = None
 METADATA_FILE = None
 OUTPUT_DIR = None
 
-# Ecotype colors (from reference code)
-ECOTYPE_COLORS = {
+# Default ecotype colours. These names are only the ones used by the original
+# reference cohort - the actual class names come from the run's label_mapping
+# file, so this dict is rebuilt at load time by _sync_ecotype_palette() below.
+# Every plotting loop iterates ECOTYPE_COLORS, so a class missing from here is
+# silently absent from the figure rather than drawn in a default colour.
+DEFAULT_ECOTYPE_COLORS = {
     'Fibrotic': '#E74C3C',              # Red
     'Immunosuppressive': '#3498DB',     # Blue
     'Invasive_Border': '#F39C12',       # Orange
     'Metabolic': '#2ECC71',             # Green
     'Normal_Adjacent': '#9B59B6'        # Purple
 }
+
+# Live palette: seeded from the defaults, replaced once the real labels are known.
+ECOTYPE_COLORS = dict(DEFAULT_ECOTYPE_COLORS)
+
+# Colour-blind-safe fallback cycle for ecotype names with no canonical colour.
+FALLBACK_COLORS = [
+    '#0173B2', '#DE8F05', '#029E73', '#D55E00', '#CC78BC',
+    '#CA9161', '#FBAFE4', '#949494', '#ECE133', '#56B4E9',
+]
 
 LABEL_TO_ECOTYPE = {
     0: 'Fibrotic',
@@ -70,6 +82,30 @@ LABEL_TO_ECOTYPE = {
     3: 'Metabolic',
     4: 'Normal_Adjacent'
 }
+
+
+def _sync_ecotype_palette(label_to_ecotype):
+    """Rebuild ECOTYPE_COLORS to cover exactly the ecotypes in this run.
+
+    The plotting routines iterate ECOTYPE_COLORS.keys() and index it by name.
+    Before this existed the dict was a fixed five-name palette, so any cohort
+    whose label_mapping used different names (or a different number of classes)
+    had those classes quietly dropped from every spatial figure - the plot
+    still rendered, just with points missing and no warning.
+    """
+    global ECOTYPE_COLORS
+    palette, unknown = {}, []
+    for name in dict.fromkeys(label_to_ecotype.values()):   # preserve label order
+        if name in DEFAULT_ECOTYPE_COLORS:
+            palette[name] = DEFAULT_ECOTYPE_COLORS[name]
+        else:
+            palette[name] = FALLBACK_COLORS[len(unknown) % len(FALLBACK_COLORS)]
+            unknown.append(name)
+    if palette:
+        ECOTYPE_COLORS = palette
+    if unknown:
+        print(f"  ℹ️  Assigned fallback colours to non-default ecotypes: {unknown}")
+    return ECOTYPE_COLORS
 
 # Note: OUTPUT_DIR will be initialized in main() after argument parsing
 # Note: PATIENTS list is NO LONGER HARDCODED - extracted dynamically from data
@@ -104,17 +140,23 @@ class SpatialVisualizationPipeline:
         print(f"✓ Predictions loaded: {len(predictions_df)} spots")
         print(f"  Patients: {sorted(predictions_df['patient_id'].unique())}")
         
-        # Load embeddings for PCA coordinates (303D fused embeddings)
-        if not Path(EMBEDDINGS_FILE).exists():
-            raise FileNotFoundError(f"Embeddings file not found: {EMBEDDINGS_FILE}")
-        
-        embeddings_array = np.load(EMBEDDINGS_FILE)
-        print(f"✓ Embeddings loaded: {embeddings_array.shape} (fused: UNI 150D + scVI 128D + RCTD 25D)")
+        # Fused embeddings are optional here: spatial coordinates now come from the
+        # metadata (x_coord / y_coord), not from a PCA of the embedding space.
+        # The file is still loaded (when supplied) purely as a sanity check on spot counts.
+        if EMBEDDINGS_FILE and Path(EMBEDDINGS_FILE).exists():
+            embeddings_array = np.load(EMBEDDINGS_FILE)
+            print(f"✓ Embeddings loaded (reference only): {embeddings_array.shape}")
+        else:
+            embeddings_array = None
+            print("ℹ️  No fused embeddings supplied - not required for spatial plots")
         
         # Load label mapping
-        with open(LABEL_MAPPING_FILE, 'r') as f:
+        with open(LABEL_MAPPING_FILE, 'r', encoding='utf-8') as f:
             label_mapping = json.load(f)
-        label_names = [label_mapping['labels'][str(i)] for i in range(5)]
+        # Derive class names from whatever keys the mapping actually has, so this
+        # works for 0- or 1-indexed label files and for cohorts with != 5 ecotypes.
+        label_names = [label_mapping['labels'][k]
+                       for k in sorted(label_mapping['labels'], key=lambda x: int(x))]
         print(f"✓ Label mapping loaded: {label_names}")
         
         # Load metadata for barcode indexes
@@ -148,6 +190,10 @@ class SpatialVisualizationPipeline:
             print(f"   Using default label mapping (may be incorrect if CSV is not 0-indexed)")
             LABEL_TO_ECOTYPE_CORRECTED = LABEL_TO_ECOTYPE
         
+        # Align the colour palette with the ecotype names this run actually uses,
+        # otherwise classes outside the default five vanish from the figures.
+        _sync_ecotype_palette(LABEL_TO_ECOTYPE_CORRECTED)
+        
         # Create ecotype name columns using corrected mapping
         predictions_df['ground_truth_ecotype'] = predictions_df['ground_truth_label'].map(LABEL_TO_ECOTYPE_CORRECTED)
         predictions_df['predicted_ecotype'] = predictions_df['predicted_label'].map(LABEL_TO_ECOTYPE_CORRECTED)
@@ -162,69 +208,67 @@ class SpatialVisualizationPipeline:
             predictions_df['confidence'] = 0.5  # Default fallback
         
         print("\n" + "="*80)
-        print("[STAGE 2] Computing PCA coordinates from embeddings (per-patient)...")
+        print("[STAGE 2] Loading spatial coordinates from metadata...")
         print("="*80)
-        print("NOTE: Using PCA of 303D embeddings to generate PC1, PC2 coordinates")
-        print("       array_col = PC1, array_row = PC2 (embedding space coordinates)")
+        print("Using actual tissue spatial coordinates (x_coord, y_coord)")
         print("="*80)
         
-        # Create barcode to embedding index mapping
-        metadata_df_sorted = metadata_df.sort_values('barcode').reset_index(drop=True)
-        barcode_to_embedding_idx = {bc: idx for idx, bc in enumerate(metadata_df_sorted['barcode'])}
+        # Reset index to avoid alignment issues
+        predictions_df = predictions_df.reset_index(drop=True)
+        metadata_df = metadata_df.reset_index(drop=True)
         
-        # Initialize PCA coordinate columns
-        predictions_df['array_col'] = np.nan
-        predictions_df['array_row'] = np.nan
+        # train_mlp.py already carries x_coord/y_coord through into
+        # predictions_all_spots.csv. Merging metadata in unconditionally would
+        # collide on those names and yield x_coord_x / x_coord_y, so only pull
+        # the coordinates across when the predictions do not already have them.
+        # A column can also be present but entirely NaN: train_mlp.py always
+        # emits x_coord/y_coord, filling them only when it could read the
+        # metadata. Treat an all-empty column as absent and re-join.
+        coord_cols = ['x_coord', 'y_coord']
+        missing = [c for c in coord_cols
+                   if c not in predictions_df.columns
+                   or predictions_df[c].isna().all()]
         
-        # Extract unique patient IDs dynamically from data (NOT hardcoded)
-        # Barcodes are formatted as: patient_id_barcode_suffix
-        # Extract patient_id from predictions DataFrame directly
+        if missing:
+            predictions_df = predictions_df.drop(
+                columns=[c for c in coord_cols if c in predictions_df.columns]
+            )
+            required = ['barcode', 'patient_id'] + coord_cols
+            absent = [c for c in required if c not in metadata_df.columns]
+            if absent:
+                raise KeyError(
+                    f"Metadata file {METADATA_FILE} is missing column(s) {absent}. "
+                    f"Spatial plots need barcode, patient_id, x_coord and y_coord."
+                )
+            merge_df = metadata_df[required].copy()
+            predictions_df = predictions_df.merge(
+                merge_df, on=['barcode', 'patient_id'], how='left'
+            )
+            print("  Coordinates joined from metadata")
+        else:
+            print("  Coordinates already present in predictions - no join needed")
+        
+        # Use x_coord, y_coord as array_col, array_row
+        predictions_df['array_col'] = predictions_df['x_coord']
+        predictions_df['array_row'] = predictions_df['y_coord']
+        
+        # Extract unique patient IDs dynamically from data (NOT hardcoded).
+        # Replaces the former module-level PATIENTS = ['P1'..'P5'] constant so the
+        # pipeline generalises to any cohort/dataset.
         unique_patients = sorted(predictions_df['patient_id'].unique())
         
-        # For each patient, apply PCA to their embeddings
+        # Report stats per patient
         for patient_id in unique_patients:
-            # Get all spots for this patient
             patient_mask = predictions_df['patient_id'] == patient_id
-            patient_spots = predictions_df[patient_mask].copy()
+            patient_data = predictions_df[patient_mask]
             
-            if patient_spots.empty:
-                print(f"  ⚠️  {patient_id}: No spots found")
-                continue
-            
-            # Get embedding indices for this patient's barcodes
-            embedding_indices = []
-            valid_rows = []
-            
-            for idx, (df_idx, row) in enumerate(predictions_df[patient_mask].iterrows()):
-                barcode = row['barcode']
-                emb_idx = barcode_to_embedding_idx.get(barcode)
-                
-                if emb_idx is not None:
-                    embedding_indices.append(emb_idx)
-                    valid_rows.append(df_idx)
-            
-            if not embedding_indices:
-                print(f"  ⚠️  {patient_id}: No valid embeddings found")
-                continue
-            
-            # Extract patient's embeddings
-            patient_embeddings = embeddings_array[embedding_indices]  # Shape: (n_spots, 303)
-            
-            # Apply PCA to reduce 303D embeddings to 2D
-            pca = PCA(n_components=2)
-            patient_pca_coords = pca.fit_transform(patient_embeddings)  # Shape: (n_spots, 2)
-            
-            # PC1 explained variance
-            variance_explained = pca.explained_variance_ratio_.sum()
-            
-            # Assign PC1, PC2 coordinates to dataframe
-            predictions_df.loc[valid_rows, 'array_col'] = patient_pca_coords[:, 0]  # PC1
-            predictions_df.loc[valid_rows, 'array_row'] = patient_pca_coords[:, 1]  # PC2
-            
-            print(f"  ✓ {patient_id}: {len(embedding_indices)} spots | "
-                  f"Variance explained: {variance_explained:.2%} | "
-                  f"PC1 range: [{patient_pca_coords[:, 0].min():.2f}, {patient_pca_coords[:, 0].max():.2f}] | "
-                  f"PC2 range: [{patient_pca_coords[:, 1].min():.2f}, {patient_pca_coords[:, 1].max():.2f}]")
+            valid_coords = patient_data.dropna(subset=['array_col', 'array_row'])
+            if len(valid_coords) > 0:
+                print(f"  ✓ {patient_id}: {len(valid_coords)} spots | "
+                      f"X range: [{valid_coords['array_col'].min():.1f}, {valid_coords['array_col'].max():.1f}] | "
+                      f"Y range: [{valid_coords['array_row'].min():.1f}, {valid_coords['array_row'].max():.1f}]")
+            else:
+                print(f"  ⚠️  {patient_id}: No valid coordinates found")
         
         # Drop rows with missing coordinates
         rows_before = len(predictions_df)
@@ -239,7 +283,7 @@ class SpatialVisualizationPipeline:
         
         print(f"\n✓ Data loading complete:")
         print(f"  - Total valid spots: {len(self.data)}")
-        print(f"  - Embedding coordinates (array_col, array_row) assigned from PCA")
+        print(f"  - Tissue coordinates (array_col, array_row) taken from metadata x/y_coord")
         
         return predictions_df
     
@@ -270,10 +314,10 @@ class SpatialVisualizationPipeline:
                     s=60, alpha=0.7, edgecolors='black', linewidths=0.5
                 )
         
-        ax1.set_title(f'{patient_id} - Ground Truth Labels\n(Embedding Space Coordinates)', 
+        ax1.set_title(f'{patient_id} - Ground Truth Labels\n(Tissue Spatial Coordinates)', 
                       fontsize=14, fontweight='bold')
-        ax1.set_xlabel('PC1 - 1st Principal Component (from 303D embeddings)', fontsize=11)
-        ax1.set_ylabel('PC2 - 2nd Principal Component (from 303D embeddings)', fontsize=11)
+        ax1.set_xlabel('X Coordinate (Tissue Space)', fontsize=11)
+        ax1.set_ylabel('Y Coordinate (Tissue Space)', fontsize=11)
         ax1.legend(loc='upper right', fontsize=9, framealpha=0.9)
         ax1.set_aspect('equal')
         ax1.grid(True, alpha=0.3)
@@ -295,8 +339,8 @@ class SpatialVisualizationPipeline:
         
         ax2.set_title(f'{patient_id} - Model Predictions\n(Accuracy: {overall_accuracy:.2f}%)', 
                       fontsize=14, fontweight='bold')
-        ax2.set_xlabel('PC1 - 1st Principal Component (from 303D embeddings)', fontsize=11)
-        ax2.set_ylabel('PC2 - 2nd Principal Component (from 303D embeddings)', fontsize=11)
+        ax2.set_xlabel('X Coordinate (Tissue Space)', fontsize=11)
+        ax2.set_ylabel('Y Coordinate (Tissue Space)', fontsize=11)
         ax2.legend(loc='upper right', fontsize=9, framealpha=0.9)
         ax2.set_aspect('equal')
         ax2.grid(True, alpha=0.3)
@@ -330,8 +374,8 @@ class SpatialVisualizationPipeline:
         
         ax3.set_title(f'{patient_id} - Accuracy Map\n(Accuracy: {accuracy:.2f}%)', 
                       fontsize=14, fontweight='bold')
-        ax3.set_xlabel('PC1 - 1st Principal Component (from 303D embeddings)', fontsize=11)
-        ax3.set_ylabel('PC2 - 2nd Principal Component (from 303D embeddings)', fontsize=11)
+        ax3.set_xlabel('X Coordinate (Tissue Space)', fontsize=11)
+        ax3.set_ylabel('Y Coordinate (Tissue Space)', fontsize=11)
         ax3.legend(loc='upper right', fontsize=10, framealpha=0.9)
         ax3.set_aspect('equal')
         ax3.grid(True, alpha=0.3)
@@ -373,10 +417,10 @@ class SpatialVisualizationPipeline:
         cbar1 = plt.colorbar(scatter1, ax=ax1)
         cbar1.set_label('Prediction Confidence', fontsize=12, fontweight='bold')
         
-        ax1.set_title(f'{patient_id} - Confidence Map\n(Embedding Space, Higher = More Certain)', 
+        ax1.set_title(f'{patient_id} - Confidence Map\n(Tissue Space, Higher = More Certain)', 
                       fontsize=14, fontweight='bold')
-        ax1.set_xlabel('PC1 - 1st Principal Component (from 303D embeddings)', fontsize=11)
-        ax1.set_ylabel('PC2 - 2nd Principal Component (from 303D embeddings)', fontsize=11)
+        ax1.set_xlabel('X Coordinate (Tissue Space)', fontsize=11)
+        ax1.set_ylabel('Y Coordinate (Tissue Space)', fontsize=11)
         ax1.set_aspect('equal')
         ax1.grid(True, alpha=0.3)
         
@@ -413,10 +457,10 @@ class SpatialVisualizationPipeline:
             s=100, alpha=0.9, edgecolors='black', linewidths=1, marker='s'
         )
         
-        ax2.set_title(f'{patient_id} - Uncertainty Regions\n(Embedding Space, Red = Model Unsure)', 
+        ax2.set_title(f'{patient_id} - Uncertainty Regions\n(Tissue Space, Red = Model Unsure)', 
                       fontsize=14, fontweight='bold')
-        ax2.set_xlabel('PC1 - 1st Principal Component (from 303D embeddings)', fontsize=11)
-        ax2.set_ylabel('PC2 - 2nd Principal Component (from 303D embeddings)', fontsize=11)
+        ax2.set_xlabel('X Coordinate (Tissue Space)', fontsize=11)
+        ax2.set_ylabel('Y Coordinate (Tissue Space)', fontsize=11)
         ax2.legend(loc='upper right', fontsize=10, framealpha=0.9)
         ax2.set_aspect('equal')
         ax2.grid(True, alpha=0.3)
@@ -523,8 +567,8 @@ class SpatialVisualizationPipeline:
                 title_text = f"{ecotype}\n(Insufficient data)\nn = {len(ecotype_data)}"
             
             ax.set_title(title_text, fontsize=11, fontweight='bold')
-            ax.set_xlabel('PC1 (from 303D embeddings)', fontsize=10)
-            ax.set_ylabel('PC2 (from 303D embeddings)', fontsize=10)
+            ax.set_xlabel('X Coordinate (Tissue Space)', fontsize=10)
+            ax.set_ylabel('Y Coordinate (Tissue Space)', fontsize=10)
             ax.set_aspect('equal')
             ax.grid(True, alpha=0.3)
             ax.legend(loc='upper right', fontsize=9)
@@ -613,8 +657,8 @@ Total Spots: {len(patient_data)}"""
                     text=patient_data.loc[mask].apply(
                         lambda row: f"<b>{row['predicted_ecotype']}</b><br>"
                                   f"Confidence: {row.get('confidence', 0):.3f}<br>"
-                                  f"Embedding Position: (PC1={row['array_col']:.2f}, PC2={row['array_row']:.2f})<br>"
-                                  f"<i>X,Y = Embedding Space | Higher Z = Higher Confidence</i>", 
+                                  f"Position: (X={row['array_col']:.2f}, Y={row['array_row']:.2f})<br>"
+                                  f"<i>Tissue Spatial Location</i>", 
                         axis=1
                     ),
                     hoverinfo='text'
@@ -622,10 +666,10 @@ Total Spots: {len(patient_data)}"""
         
         fig.update_layout(
             title=f'{patient_id} - 3D Tissue Landscape<br>'
-                  f'<sub>X,Y = Embedding Space (PC1, PC2 from 303D) | Z = {z_label} | Color = Ecotype</sub>',
+                  f'<sub>X,Y = Tissue Spatial Coordinates | Z = {z_label} | Color = Ecotype</sub>',
             scene=dict(
-                xaxis_title='PC1 - 1st Principal Component (from 303D embeddings)',
-                yaxis_title='PC2 - 2nd Principal Component (from 303D embeddings)',
+                xaxis_title='X Coordinate (Tissue Space)',
+                yaxis_title='Y Coordinate (Tissue Space)',
                 zaxis_title=f'{z_label}',
                 zaxis=dict(nticks=4, range=[0, 1]),
                 camera=dict(
@@ -724,8 +768,10 @@ def main():
     parser.add_argument(
         '--embeddings',
         type=str,
-        required=True,
-        help='Path to fused embeddings NPY file (required)'
+        required=False,
+        default=None,
+        help='Path to fused embeddings NPY file (optional; coordinates now come '
+             'from the metadata x_coord/y_coord, not from a PCA of embeddings)'
     )
     
     parser.add_argument(
@@ -746,7 +792,7 @@ def main():
     # Load config if provided
     if args.config:
         import yaml
-        with open(args.config, 'r') as f:
+        with open(args.config, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
         
         input_dataset_config = config.get('input_dataset', {})

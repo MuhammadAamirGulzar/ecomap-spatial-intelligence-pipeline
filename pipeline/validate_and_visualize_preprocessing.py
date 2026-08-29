@@ -53,7 +53,7 @@ parser.add_argument('--preprocessed-arrays-dir', type=str, help='Path to preproc
 args = parser.parse_args()
 
 if args.config:
-    with open(args.config, 'r') as f:
+    with open(args.config, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     OUTPUT_DIR = config.get('output', {}).get('output_dir')
     if not OUTPUT_DIR:
@@ -100,7 +100,7 @@ else:
     PREPROCESSED_ARRAYS_DIR = PREPROCESSED_ARRAYS_DIR / "preprocessed_arrays"
 
 if args.config:
-    with open(args.config, 'r') as f:
+    with open(args.config, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     input_dataset_config = config.get('input_dataset', {})
     # Get the directory from labels file path

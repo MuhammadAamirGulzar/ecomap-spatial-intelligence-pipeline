@@ -41,6 +41,10 @@ validation_env/
 data/
 results/
 results_*/
+# smoke-test outputs (see tests/README.md)
+smoke_results/
+smoke_unified/
+config/.smoke/
 *.npy
 *.npz
 embeddings/
@@ -68,7 +72,6 @@ Thumbs.db
 # Documentation files (development only)
 *.md
 !README.md
-!README_REPRODUCIBLE.md
 
 # Testing and development scripts
 test_*.py

@@ -134,7 +134,7 @@ class MLPTrainer:
         """Calculate inverse frequency weights for class balancing"""
         classes, counts = np.unique(y, return_counts=True)
         weights = len(y) / (len(classes) * counts)
-        weights = weights / weights.sum() * len(classes)  # normalize
+        weights = weights / weights.sum() * len(classes)  # normalize or like multiply scale
         return torch.tensor(weights, dtype=torch.float32).to(self.device)
     
     def train_epoch(self, train_loader: DataLoader, criterion: nn.Module):
@@ -273,8 +273,8 @@ class MLPTrainer:
                     print(f"    Early stopping at epoch {epoch+1}")
                 break
             
-            if verbose and (epoch + 1) % 50 == 0:
-                print(f"    Epoch {epoch+1:3d}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, "
+            if verbose and (epoch + 1) % 5 == 0:
+                print(f"    Epoch {epoch+1:3d}/{epochs}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, "
                       f"train_acc={train_acc:.4f}, val_acc={val_acc:.4f}")
         
         # Restore best model
@@ -339,12 +339,37 @@ def load_data(embeddings_path: str, labels_path: str, metadata_path: str = None)
     if metadata_path and Path(metadata_path).exists():
         try:
             spatial_data = pd.read_csv(metadata_path)
-            # Match barcodes with spatial data
-            spatial_data['barcode_short'] = spatial_data['original_barcode']
-            spatial_map = dict(zip(spatial_data['original_barcode'], spatial_data[['patient_id', 'x_coord', 'y_coord']]))
-            print(f"  ✓ Spatial metadata: {len(spatial_data)} spots")
+            
+            # The barcode column is named 'original_barcode' in some exports and
+            # plain 'barcode' in others (load_input_embeddings.py and
+            # create_spatial_visualizations.py both assume 'barcode'). This module
+            # used to hard-require 'original_barcode' and swallow the resulting
+            # KeyError, which silently produced all-NaN x/y coordinates and made
+            # every downstream spatial visualization render nothing. Accept either.
+            barcode_col = next(
+                (c for c in ('original_barcode', 'barcode') if c in spatial_data.columns),
+                None
+            )
+            if barcode_col is None:
+                raise KeyError(
+                    "metadata needs a 'barcode' or 'original_barcode' column; "
+                    f"found {list(spatial_data.columns)}"
+                )
+            
+            missing = [c for c in ('patient_id', 'x_coord', 'y_coord')
+                       if c not in spatial_data.columns]
+            if missing:
+                raise KeyError(f"metadata is missing column(s) {missing}")
+            
+            spatial_data = spatial_data.rename(columns={barcode_col: 'barcode'})
+            print(f"  ✓ Spatial metadata: {len(spatial_data)} spots "
+                  f"(barcode column: '{barcode_col}')")
         except Exception as e:
+            # Loud, because the consequence is silent: predictions still get
+            # x_coord/y_coord columns, but entirely NaN, and the spatial stage
+            # then drops every row.
             print(f"  ⚠ Could not load spatial metadata: {e}")
+            print(f"  ⚠ Spatial coordinates will be empty and spatial plots will be skipped.")
             spatial_data = None
     else:
         print(f"  ⚠ Spatial metadata not found at {metadata_path}")
@@ -377,8 +402,8 @@ def main():
     parser.add_argument(
         '--embeddings',
         type=str,
-        required=True,
-        help='Path to fused embeddings'
+        required=False,
+        help='Path to fused embeddings (optional if config provided)'
     )
     
     parser.add_argument(
@@ -391,8 +416,8 @@ def main():
     parser.add_argument(
         '--output',
         type=str,
-        required=True,
-        help='Output directory for results'
+        required=False,
+        help='Output directory for results (optional if config provided)'
     )
     
     parser.add_argument(
@@ -419,11 +444,11 @@ def main():
     args = parser.parse_args()
     
     # Load config if provided
+    config = {}
     if args.config:
         import yaml
-        with open(args.config, 'r') as f:
+        with open(args.config, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
-        training_config = config.get('training', {})
         
         # Get labels from config if not provided via args
         if not args.labels:
@@ -435,13 +460,43 @@ def main():
                     labels_path = Path.cwd() / labels_file
                 args.labels = str(labels_path)
         
+        # Get output directory from config if not provided via args
+        if not args.output:
+            # Try teacher output first, then student output
+            teacher_output = config.get('teacher', {}).get('output_dir')
+            student_output = config.get('student', {}).get('output_dir')
+            output_dir = teacher_output or student_output
+            if output_dir:
+                output_path = Path(output_dir)
+                if not output_path.is_absolute():
+                    output_path = Path.cwd() / output_dir
+                args.output = str(output_path)
+        
+        # Get embeddings from config if not provided via args
+        if not args.embeddings:
+            # Get output directory to find preprocessed embeddings
+            if args.output:
+                output_path = Path(args.output)
+                # Look for fused_embeddings_pca.npy in .working/preprocessed_arrays
+                embeddings_path = output_path / '.working' / 'preprocessed_arrays' / 'fused_embeddings_pca.npy'
+                if embeddings_path.exists():
+                    args.embeddings = str(embeddings_path)
+                else:
+                    print(f"  ⚠ WARNING: Preprocessed embeddings not found at {embeddings_path}")
+                    print(f"             You may need to run preprocessing first or provide --embeddings")
+        
+        # Get training config for hyperparameters
+        training_config = config.get('training', {})
+        teacher_config = config.get('teacher', {})
+        student_config = config.get('student', {})
+        
         # Use config values as defaults if not provided via command line
         if args.epochs is None:
-            args.epochs = training_config.get('n_epochs', 200)
+            args.epochs = training_config.get('n_epochs') or teacher_config.get('n_epochs') or student_config.get('n_epochs') or 200
         if args.batch_size is None:
-            args.batch_size = training_config.get('batch_size', 32)
+            args.batch_size = training_config.get('batch_size') or teacher_config.get('batch_size') or student_config.get('batch_size') or 32
         if args.learning_rate is None:
-            args.learning_rate = training_config.get('learning_rate', 1e-3)
+            args.learning_rate = training_config.get('learning_rate') or teacher_config.get('learning_rate') or student_config.get('learning_rate') or 1e-3
     else:
         # Use defaults if no config
         if args.epochs is None:
@@ -454,13 +509,39 @@ def main():
             print("  ✗ ERROR: Either --config or --labels must be provided")
             sys.exit(1)
     
+    # Final validation
+    if not args.embeddings:
+        print("  ✗ ERROR: --embeddings path not found or provided")
+        sys.exit(1)
+    if not args.output:
+        print("  ✗ ERROR: --output directory not found or provided")
+        sys.exit(1)
+    
+    # Cross-validation settings. These were previously hardcoded to 5 folds and
+    # seed 42, so every config's n_folds / random_seed was silently ignored:
+    # ablations that varied them did nothing, and in the unified pipeline the
+    # teacher was always 5-fold while train_student_model_unified.py honoured
+    # the config - so teacher and student metrics were not directly comparable.
+    # Precedence matches the hyperparameter lookups above.
+    _training = config.get('training', {})
+    _teacher = config.get('teacher', {})
+    _student = config.get('student', {})
+    _pipeline = config.get('pipeline', {})
+    
+    n_folds = (_training.get('n_folds') or _teacher.get('n_folds')
+               or _student.get('n_folds') or _pipeline.get('n_folds') or 5)
+    random_seed = (_training.get('random_seed') or _teacher.get('random_seed')
+                   or _student.get('random_seed') or _pipeline.get('random_seed') or 42)
+    n_folds = int(n_folds)
+    random_seed = int(random_seed)
+    
     # Create output directory
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Create subdirectories for organized output
-    metrics_dir = output_dir / 'metrics'
-    visualizations_dir = output_dir / 'visualizations'
+    metrics_dir = output_dir / 'training' / 'metrics'
+    visualizations_dir = output_dir / 'training' / 'visualizations'
     metrics_dir.mkdir(parents=True, exist_ok=True)
     visualizations_dir.mkdir(parents=True, exist_ok=True)
     
@@ -489,7 +570,7 @@ def main():
         save_dir=str(metrics_dir)
     )
     metrics_tracker.config = {
-        'n_folds': 5,
+        'n_folds': n_folds,
         'embedding_dim': X.shape[1],
         'n_classes': len(label_encoder.classes_),
         'class_names': list(label_encoder.classes_),
@@ -502,11 +583,11 @@ def main():
     print(f"  ✓ Output directory: {metrics_tracker.save_dir}")
     print()
     
-    # 5-Fold Cross-Validation
-    print("[STAGE 3] 5-Fold Stratified Cross-Validation")
+    # Stratified K-fold cross-validation (fold count and seed come from config)
+    print(f"[STAGE 3] {n_folds}-Fold Stratified Cross-Validation (seed={random_seed})")
     print("─" * 100)
     
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_seed)
     fold_results = []
     all_y_true = []
     all_y_pred = []
@@ -547,7 +628,7 @@ def main():
         )
         
         # Train
-        trainer.fit(X_train, y_train, X_val, y_val, epochs=args.epochs, verbose=False,
+        trainer.fit(X_train, y_train, X_val, y_val, epochs=args.epochs, verbose=True,
                    metrics_tracker=metrics_tracker, fold_idx=fold_idx)
         
         # Predict on validation set
@@ -686,7 +767,7 @@ def main():
     
     # Save JSON results
     results_file = metrics_dir / 'training_results.json'
-    with open(results_file, 'w') as f:
+    with open(results_file, 'w', encoding='utf-8') as f:
         json.dump(results_summary, f, indent=2)
     print(f"  ✓ training_results.json")
     
@@ -695,9 +776,18 @@ def main():
         pickle.dump(label_encoder, f)
     print(f"  ✓ label_encoder.pkl")
     
-    # Save best model (fold 1)
+    # Save all fold models for ensemble building
+    models_dir = output_dir / 'training' / 'models'
+    models_dir.mkdir(parents=True, exist_ok=True)
+    print(f"  Saving fold models to {models_dir}...")
+    for fold_idx, fold_result in enumerate(fold_results):
+        model_path = models_dir / f"fold_{fold_idx}_best_model.pth"
+        torch.save(fold_result['model_state'], model_path)
+        print(f"    ✓ fold_{fold_idx}_best_model.pth (Accuracy: {fold_result['accuracy']:.4f})")
+    
+    # Save best model (fold 1) also to metrics for legacy compatibility
     torch.save(fold_results[0]['model_state'], metrics_dir / 'model_best.pt')
-    print(f"  ✓ model_best.pt (Fold 1)")
+    print(f"  ✓ model_best.pt (Fold 1 - legacy)")
     
     print()
     
@@ -876,7 +966,7 @@ def main():
         digits=4
     )
     
-    with open(output_dir / 'classification_report.txt', 'w') as f:
+    with open(output_dir / 'classification_report.txt', 'w', encoding='utf-8') as f:
         f.write("="*80 + "\n")
         f.write("DETAILED CLASSIFICATION REPORT (5-FOLD CV)\n")
         f.write("="*80 + "\n\n")
@@ -915,8 +1005,8 @@ def main():
         spatial_map = {}
         if spatial_data is not None:
             for idx, row in spatial_data.iterrows():
-                original_barcode = row['original_barcode']
-                spatial_map[original_barcode] = {
+                # normalised to 'barcode' in load_data() above
+                spatial_map[row['barcode']] = {
                     'patient_id': row['patient_id'],
                     'x_coord': row['x_coord'],
                     'y_coord': row['y_coord']
