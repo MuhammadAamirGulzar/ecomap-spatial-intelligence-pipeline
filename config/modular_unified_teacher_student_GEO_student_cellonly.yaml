@@ -1,0 +1,197 @@
+# =============================================================================
+# ABLATION STUDY: Teacher Multimodal vs Student Cell-Only
+# =============================================================================
+#
+# PURPOSE:
+#   Investigate influence of cell composition embeddings (RCTD)
+#   - Teacher: Multimodal (UNI + scVI + RCTD) = 171D
+#   - Student: Cell-Only (RCTD) = 25D
+#
+# HYPOTHESIS:
+#   Compare student performance using only cell composition features
+#   vs student using morphology features to determine which is more important
+#
+# =============================================================================
+
+# =============================================================================
+# DATASET METADATA (Global - shared by both)
+# =============================================================================
+dataset:
+  name: "GEO 5-Patient Unified"
+  n_samples: null  # Auto-detect
+  n_classes: 5
+  class_names:
+    - "Fibrotic"
+    - "Immunosuppressive"
+    - "Invasive_Border"
+    - "Metabolic"
+    - "Normal_Adjacent"
+  description: "Ablation: Teacher Multimodal vs Student Cell-Only"
+
+# =============================================================================
+# PIPELINE EXECUTION CONTROL
+# =============================================================================
+pipeline:
+  run_teacher: true
+  run_student: true
+  run_visualizations: true
+  device: "cpu"
+  
+  n_folds: 5
+  folds_test_size: 0.2
+  random_seed: 42
+  n_jobs: 4
+
+# =============================================================================
+# [1] SHARED INPUT DATA PATHS (TEACHER USES ALL 3 MODALITIES)
+# =============================================================================
+input_dataset:
+  # Labels and Metadata (SAME for both teacher and student)
+  labels_file: "./GEO data/input_dataset/barcode_labels.csv"
+  metadata_file: "./GEO data/input_dataset/barcode_metadata.csv"
+  label_mapping_file: "./GEO data/input_dataset/label_mapping.json"
+  
+  # Embedding CSVs (TEACHER uses all 3)
+  image_encoder_embeddings: "./GEO data/input_dataset/uni_embeddings_1024d_combined.csv"
+  gene_embeddings: "./GEO data/input_dataset/SCVI_EMBEDDING_COMBINED.CSV"
+  cell_composition_embeddings: "./GEO data/input_dataset/CELL_ENCODE_EMBEDDINGS.CSV"
+
+# =============================================================================
+# [2] PREPROCESSING & PCA CONFIGURATION (FOR TEACHER - ALL 3 MODALITIES)
+# =============================================================================
+embeddings:
+  image_encoder:
+    name: "Image Encoder (UNI)"
+    file_path: "./GEO data/input_dataset/uni_embeddings_1024d_combined.csv"
+    pca_variance: 0.6         # UNI: 1024D → ~500D after PCA
+    description: "H&E morphology features"
+  
+  gene_encoder:
+    name: "Gene Encoder (scVI)"
+    file_path: "./GEO data/input_dataset/SCVI_EMBEDDING_COMBINED.CSV"
+    pca_variance: null         # No PCA, use 128D as-is
+    description: "Gene expression latent space"
+  
+  cell_encoder:
+    name: "Cell Composition (RCTD)"
+    file_path: "./GEO data/input_dataset/CELL_ENCODE_EMBEDDINGS.CSV"
+    pca_variance: null         # No PCA, use 25D as-is
+    description: "Cell type composition"
+
+# =============================================================================
+# [2b] STUDENT-SPECIFIC EMBEDDINGS (CELL COMPOSITION ONLY)
+# =============================================================================
+student_embeddings:
+  # Student uses ONLY cell composition embeddings (RCTD)
+  image_encoder_embeddings: "./GEO data/input_dataset/CELL_ENCODE_EMBEDDINGS.CSV"  # ← CELL ONLY for student
+  gene_embeddings: null
+  cell_composition_embeddings: "./GEO data/input_dataset/CELL_ENCODE_EMBEDDINGS.CSV"
+
+preprocessing:
+  remove_nan_rows: false
+  remove_inf_rows: true
+  nan_tolerance_percent: 0.5
+  normalize_before_pca: false
+  normalization_method: "standard"
+  save_pca_models: true
+  save_preprocessed_arrays: true
+
+# =============================================================================
+# [3] TEACHER MODEL CONFIGURATION (MULTIMODAL - ALL 3 MODALITIES)
+# =============================================================================
+teacher:
+  # Architecture (multimodal)
+  model_type: "multimodal"      # Uses all 3 modalities: UNI + scVI + RCTD
+  hidden_dims: [256, 128, 64]
+  
+  # Training
+  learning_rate: 0.001
+  batch_size: 32
+  n_epochs: 200
+  weight_decay: 1e-5
+  dropout_rate: 0.3
+  use_batch_norm: true
+  use_class_weights: true
+  early_stopping_patience: 20
+  validation_split: 0.2
+  
+  # Output directory
+  output_dir: "./GEO Ablation Study/TEACHER_MULTIMODAL_GEO_baseline"
+
+# =============================================================================
+# [4] STUDENT MODEL CONFIGURATION (CELL-ONLY)
+# =============================================================================
+student:
+  # Architecture (cell-composition only)
+  model_type: "cell_only"       # Student uses only CELL embeddings
+  hidden_dims: [256, 128, 64]   # Match teacher architecture for feature matching
+  
+  # Training
+  learning_rate: 0.001
+  batch_size: 32
+  n_epochs: 150
+  weight_decay: 1e-5
+  dropout_rate: 0.3
+  use_batch_norm: true
+  use_class_weights: true
+  early_stopping_patience: 55
+  validation_split: 0.2
+  
+  # Knowledge Distillation
+  distillation:
+    alpha: 0.7        # Hard target weight
+    beta: 0.2         # Soft target weight (teacher mimicking)
+    gamma: 0.1        # Feature matching weight
+    temperature: 4.0  # Softness of teacher logits
+  
+  # Output directory
+  output_dir: "./GEO Ablation Study/STUDENT_CELLONLY_GEO_ablation"
+
+# =============================================================================
+# [5] VISUALIZATION CONFIGURATION
+# =============================================================================
+visualization:
+  save_plots: true
+  plot_dpi: 150
+  include_spatial: true
+  include_neighborhood: true
+  include_comparative: true
+
+# =============================================================================
+# [6] LOGGING
+# =============================================================================
+logging:
+  level: "INFO"
+  save_log: true
+  teacher_log: "teacher_training.log"
+  student_log: "student_training.log"
+  unified_log: "unified_pipeline.log"
+
+# =============================================================================
+# NOTES
+# =============================================================================
+#
+# ABLATION STUDY GOAL:
+# ====================
+# Determine if cell composition (RCTD) features are predictive of ecotypes
+# 
+# ARCHITECTURE:
+# ==============
+# Teacher Input: 171D (UNI:150D + scVI:128D + RCTD:25D)
+# Student Input: 25D (RCTD only)
+#
+# EXPECTED RESULTS:
+# ==================
+# Lower accuracy than image-based student because:
+# - Cell composition is derived from imaging but is coarser
+# - Missing morphological detail from UNI and gene expression
+#
+# COMPARISON:
+# ===========
+# - Baseline student (UNI): ~56% accuracy
+# - Cell-only student: Expected ~45-50% accuracy
+# - Gene-only student: Expected ~40-45% accuracy
+#
+# =============================================================================
+#./run_unified_pipeline.sh config/modular_unified_teacher_student_GEO_student_cellonly.yaml
+#./run_unified_pipeline.sh config/modular_unified_teacher_student_GEO_student_geneonly.yaml
