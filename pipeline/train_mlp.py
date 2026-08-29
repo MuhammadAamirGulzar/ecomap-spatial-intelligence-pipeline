@@ -339,12 +339,37 @@ def load_data(embeddings_path: str, labels_path: str, metadata_path: str = None)
     if metadata_path and Path(metadata_path).exists():
         try:
             spatial_data = pd.read_csv(metadata_path)
-            # Match barcodes with spatial data
-            spatial_data['barcode_short'] = spatial_data['original_barcode']
-            spatial_map = dict(zip(spatial_data['original_barcode'], spatial_data[['patient_id', 'x_coord', 'y_coord']]))
-            print(f"  ✓ Spatial metadata: {len(spatial_data)} spots")
+            
+            # The barcode column is named 'original_barcode' in some exports and
+            # plain 'barcode' in others (load_input_embeddings.py and
+            # create_spatial_visualizations.py both assume 'barcode'). This module
+            # used to hard-require 'original_barcode' and swallow the resulting
+            # KeyError, which silently produced all-NaN x/y coordinates and made
+            # every downstream spatial visualization render nothing. Accept either.
+            barcode_col = next(
+                (c for c in ('original_barcode', 'barcode') if c in spatial_data.columns),
+                None
+            )
+            if barcode_col is None:
+                raise KeyError(
+                    "metadata needs a 'barcode' or 'original_barcode' column; "
+                    f"found {list(spatial_data.columns)}"
+                )
+            
+            missing = [c for c in ('patient_id', 'x_coord', 'y_coord')
+                       if c not in spatial_data.columns]
+            if missing:
+                raise KeyError(f"metadata is missing column(s) {missing}")
+            
+            spatial_data = spatial_data.rename(columns={barcode_col: 'barcode'})
+            print(f"  ✓ Spatial metadata: {len(spatial_data)} spots "
+                  f"(barcode column: '{barcode_col}')")
         except Exception as e:
+            # Loud, because the consequence is silent: predictions still get
+            # x_coord/y_coord columns, but entirely NaN, and the spatial stage
+            # then drops every row.
             print(f"  ⚠ Could not load spatial metadata: {e}")
+            print(f"  ⚠ Spatial coordinates will be empty and spatial plots will be skipped.")
             spatial_data = None
     else:
         print(f"  ⚠ Spatial metadata not found at {metadata_path}")
@@ -961,8 +986,8 @@ def main():
         spatial_map = {}
         if spatial_data is not None:
             for idx, row in spatial_data.iterrows():
-                original_barcode = row['original_barcode']
-                spatial_map[original_barcode] = {
+                # normalised to 'barcode' in load_data() above
+                spatial_map[row['barcode']] = {
                     'patient_id': row['patient_id'],
                     'x_coord': row['x_coord'],
                     'y_coord': row['y_coord']

@@ -53,14 +53,27 @@ LABEL_MAPPING_FILE = None
 METADATA_FILE = None
 OUTPUT_DIR = None
 
-# Ecotype colors (from reference code)
-ECOTYPE_COLORS = {
+# Default ecotype colours. These names are only the ones used by the original
+# reference cohort - the actual class names come from the run's label_mapping
+# file, so this dict is rebuilt at load time by _sync_ecotype_palette() below.
+# Every plotting loop iterates ECOTYPE_COLORS, so a class missing from here is
+# silently absent from the figure rather than drawn in a default colour.
+DEFAULT_ECOTYPE_COLORS = {
     'Fibrotic': '#E74C3C',              # Red
     'Immunosuppressive': '#3498DB',     # Blue
     'Invasive_Border': '#F39C12',       # Orange
     'Metabolic': '#2ECC71',             # Green
     'Normal_Adjacent': '#9B59B6'        # Purple
 }
+
+# Live palette: seeded from the defaults, replaced once the real labels are known.
+ECOTYPE_COLORS = dict(DEFAULT_ECOTYPE_COLORS)
+
+# Colour-blind-safe fallback cycle for ecotype names with no canonical colour.
+FALLBACK_COLORS = [
+    '#0173B2', '#DE8F05', '#029E73', '#D55E00', '#CC78BC',
+    '#CA9161', '#FBAFE4', '#949494', '#ECE133', '#56B4E9',
+]
 
 LABEL_TO_ECOTYPE = {
     0: 'Fibrotic',
@@ -69,6 +82,30 @@ LABEL_TO_ECOTYPE = {
     3: 'Metabolic',
     4: 'Normal_Adjacent'
 }
+
+
+def _sync_ecotype_palette(label_to_ecotype):
+    """Rebuild ECOTYPE_COLORS to cover exactly the ecotypes in this run.
+
+    The plotting routines iterate ECOTYPE_COLORS.keys() and index it by name.
+    Before this existed the dict was a fixed five-name palette, so any cohort
+    whose label_mapping used different names (or a different number of classes)
+    had those classes quietly dropped from every spatial figure - the plot
+    still rendered, just with points missing and no warning.
+    """
+    global ECOTYPE_COLORS
+    palette, unknown = {}, []
+    for name in dict.fromkeys(label_to_ecotype.values()):   # preserve label order
+        if name in DEFAULT_ECOTYPE_COLORS:
+            palette[name] = DEFAULT_ECOTYPE_COLORS[name]
+        else:
+            palette[name] = FALLBACK_COLORS[len(unknown) % len(FALLBACK_COLORS)]
+            unknown.append(name)
+    if palette:
+        ECOTYPE_COLORS = palette
+    if unknown:
+        print(f"  ℹ️  Assigned fallback colours to non-default ecotypes: {unknown}")
+    return ECOTYPE_COLORS
 
 # Note: OUTPUT_DIR will be initialized in main() after argument parsing
 # Note: PATIENTS list is NO LONGER HARDCODED - extracted dynamically from data
@@ -153,6 +190,10 @@ class SpatialVisualizationPipeline:
             print(f"   Using default label mapping (may be incorrect if CSV is not 0-indexed)")
             LABEL_TO_ECOTYPE_CORRECTED = LABEL_TO_ECOTYPE
         
+        # Align the colour palette with the ecotype names this run actually uses,
+        # otherwise classes outside the default five vanish from the figures.
+        _sync_ecotype_palette(LABEL_TO_ECOTYPE_CORRECTED)
+        
         # Create ecotype name columns using corrected mapping
         predictions_df['ground_truth_ecotype'] = predictions_df['ground_truth_label'].map(LABEL_TO_ECOTYPE_CORRECTED)
         predictions_df['predicted_ecotype'] = predictions_df['predicted_label'].map(LABEL_TO_ECOTYPE_CORRECTED)
@@ -176,12 +217,36 @@ class SpatialVisualizationPipeline:
         predictions_df = predictions_df.reset_index(drop=True)
         metadata_df = metadata_df.reset_index(drop=True)
         
-        # Merge metadata spatial coordinates with predictions
-        merge_cols = ['barcode', 'patient_id']
-        merge_df = metadata_df[['barcode', 'patient_id', 'x_coord', 'y_coord']].copy()
+        # train_mlp.py already carries x_coord/y_coord through into
+        # predictions_all_spots.csv. Merging metadata in unconditionally would
+        # collide on those names and yield x_coord_x / x_coord_y, so only pull
+        # the coordinates across when the predictions do not already have them.
+        # A column can also be present but entirely NaN: train_mlp.py always
+        # emits x_coord/y_coord, filling them only when it could read the
+        # metadata. Treat an all-empty column as absent and re-join.
+        coord_cols = ['x_coord', 'y_coord']
+        missing = [c for c in coord_cols
+                   if c not in predictions_df.columns
+                   or predictions_df[c].isna().all()]
         
-        # Perform merge with left join on predictions
-        predictions_df = predictions_df.merge(merge_df, on=['barcode', 'patient_id'], how='left')
+        if missing:
+            predictions_df = predictions_df.drop(
+                columns=[c for c in coord_cols if c in predictions_df.columns]
+            )
+            required = ['barcode', 'patient_id'] + coord_cols
+            absent = [c for c in required if c not in metadata_df.columns]
+            if absent:
+                raise KeyError(
+                    f"Metadata file {METADATA_FILE} is missing column(s) {absent}. "
+                    f"Spatial plots need barcode, patient_id, x_coord and y_coord."
+                )
+            merge_df = metadata_df[required].copy()
+            predictions_df = predictions_df.merge(
+                merge_df, on=['barcode', 'patient_id'], how='left'
+            )
+            print("  Coordinates joined from metadata")
+        else:
+            print("  Coordinates already present in predictions - no join needed")
         
         # Use x_coord, y_coord as array_col, array_row
         predictions_df['array_col'] = predictions_df['x_coord']

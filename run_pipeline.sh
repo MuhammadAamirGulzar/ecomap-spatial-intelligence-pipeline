@@ -23,6 +23,23 @@
 
 set -e  # Exit on any error
 
+# Every stage below is wrapped in `{ ... } 2>&1 | tee -a "$LOG_FILE"`. A brace
+# group on the left of a pipe runs in a SUBSHELL, so `set -e` and the stages'
+# own `exit 1` guards only ever terminated that subshell - and the pipeline's
+# status was tee's, which is always 0. The result was that this script could
+# not fail: a stage could die (e.g. ModuleNotFoundError during training) and
+# the run would still finish by printing "COMPLETE PIPELINE EXECUTION
+# SUCCESSFUL", leaving an empty results directory behind.
+# pipefail makes the pipeline report the brace group's status, so `set -e`
+# aborts the run at the stage that actually failed.
+set -o pipefail
+
+# The pipeline scripts print box-drawing and status glyphs (─ ✓ ⚠). On Windows
+# (Git Bash / cp1252 console) Python defaults its stdout encoding to the ANSI
+# codepage and every such print raises UnicodeEncodeError, killing the stage.
+# Harmless on Linux, where UTF-8 is already the default.
+export PYTHONIOENCODING=utf-8
+
 # Navigate to script directory if not already there
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
@@ -42,16 +59,26 @@ elif [ -x "./venv/bin/python" ]; then
     # shellcheck disable=SC1091
     source venv/bin/activate
     PYTHON_EXEC="./venv/bin/python"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_EXEC="$(command -v python3)"
-    echo "NOTE: no ./.venv or ./venv found - using $PYTHON_EXEC"
-elif command -v python >/dev/null 2>&1; then
-    PYTHON_EXEC="$(command -v python)"
-    echo "NOTE: no ./.venv or ./venv found - using $PYTHON_EXEC"
 else
-    echo "ERROR: no Python interpreter found. Create a venv first:"
-    echo "  python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt"
-    exit 1
+    # No venv. Fall back to an interpreter on PATH, but VERIFY it actually runs:
+    # on Windows/Git Bash, %LOCALAPPDATA%\Microsoft\WindowsApps\python3 is an
+    # App Execution Alias that is present and executable, exits 0, and prints
+    # "Python was not found" instead of running anything. `command -v` alone
+    # happily selects it and every stage then silently does nothing.
+    PYTHON_EXEC=""
+    for _candidate in python3 python py; do
+        if command -v "$_candidate" >/dev/null 2>&1            && "$_candidate" -c "import sys; sys.exit(0)" >/dev/null 2>&1; then
+            PYTHON_EXEC="$(command -v "$_candidate")"
+            break
+        fi
+    done
+
+    if [ -z "$PYTHON_EXEC" ]; then
+        echo "ERROR: no working Python interpreter found. Create a venv first:"
+        echo "  python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt"
+        exit 1
+    fi
+    echo "NOTE: no ./.venv or ./venv found - using $PYTHON_EXEC"
 fi
 
 # Colors for output
