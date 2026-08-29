@@ -27,11 +27,32 @@ set -e  # Exit on any error
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
 
-# Activate virtual environment
-source .venv/bin/activate
-
-# Use the venv's python interpreter explicitly (relative path since we're already in SCRIPT_DIR)
-PYTHON_EXEC="./.venv/bin/python"
+# ---------------------------------------------------------------------------
+# Resolve the Python interpreter.
+# Historically run_pipeline.sh assumed ./.venv and run_unified_pipeline.sh
+# assumed ./venv, so whichever venv you had, one of the two runners broke.
+# Accept either, and fall back to whatever python is already on PATH
+# (e.g. an activated conda env) instead of failing on a missing venv.
+# ---------------------------------------------------------------------------
+if [ -x "./.venv/bin/python" ]; then
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+    PYTHON_EXEC="./.venv/bin/python"
+elif [ -x "./venv/bin/python" ]; then
+    # shellcheck disable=SC1091
+    source venv/bin/activate
+    PYTHON_EXEC="./venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_EXEC="$(command -v python3)"
+    echo "NOTE: no ./.venv or ./venv found - using $PYTHON_EXEC"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_EXEC="$(command -v python)"
+    echo "NOTE: no ./.venv or ./venv found - using $PYTHON_EXEC"
+else
+    echo "ERROR: no Python interpreter found. Create a venv first:"
+    echo "  python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -265,7 +286,7 @@ export WORKING_DIR="$WORKING_DIR"
     $PYTHON_EXEC pipeline/train_mlp.py \
         --config "$CONFIG_FILE" \
         --embeddings "$WORKING_DIR/preprocessed_arrays/fused_embeddings_pca.npy" \
-        --output "$OUTPUT_DIR/training"
+        --output "$OUTPUT_DIR"
 
     if [ ! -f "$OUTPUT_DIR/training/metrics/training_results.json" ]; then
         echo -e "${RED}Error in Stage 4: Training failed${NC}"

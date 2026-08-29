@@ -703,8 +703,10 @@ def main():
     parser.add_argument(
         '--embeddings',
         type=str,
-        required=True,
-        help='Path to fused embeddings NPY file (required)'
+        required=False,
+        default=None,
+        help='Path to fused embeddings NPY file (optional; coordinates now come '
+             'from the metadata x_coord/y_coord, not from a PCA of embeddings)'
     )
     
     parser.add_argument(

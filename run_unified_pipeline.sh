@@ -22,9 +22,32 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
 
-# Activate venv
-source venv/bin/activate
-PYTHON_EXEC="./venv/bin/python"
+# ---------------------------------------------------------------------------
+# Resolve the Python interpreter.
+# Historically run_pipeline.sh assumed ./.venv and run_unified_pipeline.sh
+# assumed ./venv, so whichever venv you had, one of the two runners broke.
+# Accept either, and fall back to whatever python is already on PATH
+# (e.g. an activated conda env) instead of failing on a missing venv.
+# ---------------------------------------------------------------------------
+if [ -x "./.venv/bin/python" ]; then
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+    PYTHON_EXEC="./.venv/bin/python"
+elif [ -x "./venv/bin/python" ]; then
+    # shellcheck disable=SC1091
+    source venv/bin/activate
+    PYTHON_EXEC="./venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_EXEC="$(command -v python3)"
+    echo "NOTE: no ./.venv or ./venv found - using $PYTHON_EXEC"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_EXEC="$(command -v python)"
+    echo "NOTE: no ./.venv or ./venv found - using $PYTHON_EXEC"
+else
+    echo "ERROR: no Python interpreter found. Create a venv first:"
+    echo "  python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt"
+    exit 1
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -212,6 +235,41 @@ if [ $? -ne 0 ]; then
 fi
 
 log_success "Student training complete"
+echo ""
+
+################################################################################
+# PHASE 4: SPATIAL VISUALISATIONS (teacher predictions)
+################################################################################
+# Restores parity with run_pipeline.sh, which produced the spatial ecotype maps,
+# confidence/uncertainty maps, neighbourhood analysis and 3D tissue landscapes.
+# The unified runner previously skipped this even though its own completion
+# banner advertised the post-training visualisation directories.
+#
+# Guarded and non-fatal: the script runs under `set -e`, and these plots are a
+# reporting nicety - a failure here must not discard a completed training run.
+
+echo ""
+echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}PHASE 4: SPATIAL VISUALISATIONS (Teacher)${NC}"
+echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+TEACHER_PREDICTIONS="$TEACHER_OUTPUT_DIR/training/metrics/predictions_all_spots.csv"
+
+if [ -f "$TEACHER_PREDICTIONS" ]; then
+    set +e
+    $PYTHON_EXEC pipeline/create_spatial_visualizations.py         --config "$TEACHER_CONFIG"         --predictions "$TEACHER_PREDICTIONS"         --output "$TEACHER_OUTPUT_DIR/post-training/visualizations"
+    VIZ_STATUS=$?
+    set -e
+
+    if [ $VIZ_STATUS -eq 0 ]; then
+        log_success "Spatial visualisations complete"
+    else
+        echo -e "${YELLOW}⚠ Spatial visualisations failed (exit $VIZ_STATUS) - training results are unaffected${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ Skipping: $TEACHER_PREDICTIONS not found${NC}"
+fi
 echo ""
 
 ################################################################################
