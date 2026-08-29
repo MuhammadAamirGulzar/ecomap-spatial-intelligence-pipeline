@@ -878,7 +878,7 @@ class StudentVisualizationSuite:
         
         # Save report
         report_path = self.vis_dirs['comparative'] / 'visualization_summary.json'
-        with open(report_path, 'w') as f:
+        with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(report, f, indent=2)
         
         logger.info(f"  ✓ visualization_summary.json")

@@ -74,7 +74,7 @@ def build_ensemble_teacher(teacher_output_dir):
     
     # Load training results to get architecture info
     metrics_file = metrics_dir / "training_results.json"
-    with open(metrics_file, 'r') as f:
+    with open(metrics_file, 'r', encoding='utf-8') as f:
         metrics = json.load(f)
     
     print("=" * 80)
@@ -279,7 +279,7 @@ def main():
         
         # Save summary
         summary_path = Path(args.teacher_output) / "ensemble_teacher_summary.json"
-        with open(summary_path, 'w') as f:
+        with open(summary_path, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2)
         
         print(f"\n✓ Summary saved: {summary_path}")

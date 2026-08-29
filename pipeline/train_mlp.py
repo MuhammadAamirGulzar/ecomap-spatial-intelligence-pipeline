@@ -444,9 +444,10 @@ def main():
     args = parser.parse_args()
     
     # Load config if provided
+    config = {}
     if args.config:
         import yaml
-        with open(args.config, 'r') as f:
+        with open(args.config, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
         
         # Get labels from config if not provided via args
@@ -516,6 +517,24 @@ def main():
         print("  ✗ ERROR: --output directory not found or provided")
         sys.exit(1)
     
+    # Cross-validation settings. These were previously hardcoded to 5 folds and
+    # seed 42, so every config's n_folds / random_seed was silently ignored:
+    # ablations that varied them did nothing, and in the unified pipeline the
+    # teacher was always 5-fold while train_student_model_unified.py honoured
+    # the config - so teacher and student metrics were not directly comparable.
+    # Precedence matches the hyperparameter lookups above.
+    _training = config.get('training', {})
+    _teacher = config.get('teacher', {})
+    _student = config.get('student', {})
+    _pipeline = config.get('pipeline', {})
+    
+    n_folds = (_training.get('n_folds') or _teacher.get('n_folds')
+               or _student.get('n_folds') or _pipeline.get('n_folds') or 5)
+    random_seed = (_training.get('random_seed') or _teacher.get('random_seed')
+                   or _student.get('random_seed') or _pipeline.get('random_seed') or 42)
+    n_folds = int(n_folds)
+    random_seed = int(random_seed)
+    
     # Create output directory
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -551,7 +570,7 @@ def main():
         save_dir=str(metrics_dir)
     )
     metrics_tracker.config = {
-        'n_folds': 5,
+        'n_folds': n_folds,
         'embedding_dim': X.shape[1],
         'n_classes': len(label_encoder.classes_),
         'class_names': list(label_encoder.classes_),
@@ -564,11 +583,11 @@ def main():
     print(f"  ✓ Output directory: {metrics_tracker.save_dir}")
     print()
     
-    # 5-Fold Cross-Validation
-    print("[STAGE 3] 5-Fold Stratified Cross-Validation")
+    # Stratified K-fold cross-validation (fold count and seed come from config)
+    print(f"[STAGE 3] {n_folds}-Fold Stratified Cross-Validation (seed={random_seed})")
     print("─" * 100)
     
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_seed)
     fold_results = []
     all_y_true = []
     all_y_pred = []
@@ -748,7 +767,7 @@ def main():
     
     # Save JSON results
     results_file = metrics_dir / 'training_results.json'
-    with open(results_file, 'w') as f:
+    with open(results_file, 'w', encoding='utf-8') as f:
         json.dump(results_summary, f, indent=2)
     print(f"  ✓ training_results.json")
     
@@ -947,7 +966,7 @@ def main():
         digits=4
     )
     
-    with open(output_dir / 'classification_report.txt', 'w') as f:
+    with open(output_dir / 'classification_report.txt', 'w', encoding='utf-8') as f:
         f.write("="*80 + "\n")
         f.write("DETAILED CLASSIFICATION REPORT (5-FOLD CV)\n")
         f.write("="*80 + "\n\n")

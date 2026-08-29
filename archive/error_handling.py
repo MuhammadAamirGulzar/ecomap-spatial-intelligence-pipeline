@@ -158,7 +158,7 @@ class FileValidator:
         FileValidator.check_file_exists(csv_file, "CSV file")
         
         try:
-            with open(csv_file, 'r') as f:
+            with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
                 rows = list(reader)
             
@@ -213,7 +213,7 @@ class ConfigValidator:
         FileValidator.check_file_exists(self.config_file, "Config file")
         
         try:
-            with open(self.config_file, 'r') as f:
+            with open(self.config_file, 'r', encoding='utf-8') as f:
                 self.config = yaml.safe_load(f)
         except Exception as e:
             solution = (

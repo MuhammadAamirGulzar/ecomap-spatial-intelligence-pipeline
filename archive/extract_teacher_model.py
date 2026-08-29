@@ -83,7 +83,7 @@ def extract_teacher_model(teacher_output_dir):
         raise FileNotFoundError(f"Metrics file not found: {metrics_file}\n"
                               "Training may not be complete yet.")
     
-    with open(metrics_file, 'r') as f:
+    with open(metrics_file, 'r', encoding='utf-8') as f:
         metrics = json.load(f)
     
     # Find best fold from per_fold results
@@ -313,7 +313,7 @@ def main():
         
         # Save validation report
         report_path = Path(args.teacher_output) / "frozen_teacher_validation.txt"
-        with open(report_path, 'w') as f:
+        with open(report_path, 'w', encoding='utf-8') as f:
             f.write("TEACHER MODEL FREEZING VALIDATION REPORT\n")
             f.write("=" * 80 + "\n\n")
             

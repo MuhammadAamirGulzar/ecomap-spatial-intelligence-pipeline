@@ -151,7 +151,7 @@ class SpatialVisualizationPipeline:
             print("ℹ️  No fused embeddings supplied - not required for spatial plots")
         
         # Load label mapping
-        with open(LABEL_MAPPING_FILE, 'r') as f:
+        with open(LABEL_MAPPING_FILE, 'r', encoding='utf-8') as f:
             label_mapping = json.load(f)
         # Derive class names from whatever keys the mapping actually has, so this
         # works for 0- or 1-indexed label files and for cohorts with != 5 ecotypes.
@@ -792,7 +792,7 @@ def main():
     # Load config if provided
     if args.config:
         import yaml
-        with open(args.config, 'r') as f:
+        with open(args.config, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
         
         input_dataset_config = config.get('input_dataset', {})

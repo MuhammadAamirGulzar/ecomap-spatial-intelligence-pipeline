@@ -33,7 +33,7 @@ args = parser.parse_args()
 
 # Get paths from environment or arguments
 if args.config:
-    with open(args.config, 'r') as f:
+    with open(args.config, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     output_dir = config.get('output', {}).get('output_dir')
     if not output_dir:
@@ -180,7 +180,7 @@ qc_csv = {
 df_qc = pd.DataFrame(qc_csv)
 df_qc.to_csv(metrics_dir / 'validation_qc_report.csv', index=False)
 
-with open(metrics_dir / 'validation_qc_report.json', 'w') as f:
+with open(metrics_dir / 'validation_qc_report.json', 'w', encoding='utf-8') as f:
     json.dump(qc_report, f, indent=2)
 
 print(f"  ✓ Saved: metrics/validation_qc_report.csv")

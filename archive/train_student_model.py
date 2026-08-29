@@ -583,7 +583,7 @@ def train_student(config, teacher_model, X_student, y, X_for_teacher, device, ou
     metrics_dir = output_dir / "training" / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     
-    with open(metrics_dir / "student_metrics.json", 'w') as f:
+    with open(metrics_dir / "student_metrics.json", 'w', encoding='utf-8') as f:
         json.dump(cv_metrics, f, indent=2)
     
     print(f"\n{'='*80}")
@@ -606,7 +606,7 @@ def main():
     args = parser.parse_args()
     
     # Load config
-    with open(args.config, 'r') as f:
+    with open(args.config, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
     # Ensure all numeric config values are proper types (fix YAML parsing issues)

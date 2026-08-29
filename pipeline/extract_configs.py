@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 config_file = sys.argv[1]
-with open(config_file, 'r') as f:
+with open(config_file, 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 # Build teacher config
@@ -27,7 +27,7 @@ teacher_section = {
     'logging': config.get('logging', {})
 }
 
-with open(teacher_config_path, 'w') as f:
+with open(teacher_config_path, 'w', encoding='utf-8') as f:
     yaml.dump(teacher_section, f, default_flow_style=False)
 
 # Build student config
@@ -93,7 +93,7 @@ student_full = {
     'logging': config.get('logging', {})
 }
 
-with open(student_config_path, 'w') as f:
+with open(student_config_path, 'w', encoding='utf-8') as f:
     yaml.dump(student_full, f, default_flow_style=False)
 
 # Output the paths

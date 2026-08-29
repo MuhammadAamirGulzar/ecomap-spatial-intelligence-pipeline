@@ -871,7 +871,7 @@ def train_student(config: Dict, teacher_model, X_student, X_teacher, y, barcode_
         'per_fold': [convert_to_native(f) for f in fold_results]
     }
     
-    with open(metrics_dir / "student_training_results.json", 'w') as f:
+    with open(metrics_dir / "student_training_results.json", 'w', encoding='utf-8') as f:
         json.dump(results_json, f, indent=2)
     
     # Save predictions WITH ACTUAL BARCODES for proper patient linking
@@ -901,7 +901,7 @@ def main():
     args = parser.parse_args()
     
     # Load config
-    with open(args.config, 'r') as f:
+    with open(args.config, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
     # Type conversions

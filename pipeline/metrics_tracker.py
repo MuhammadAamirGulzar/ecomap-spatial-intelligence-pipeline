@@ -317,7 +317,7 @@ class MetricsTracker:
             }
         
         output_file = self.save_dir / filename
-        with open(output_file, 'w') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(histories, f, indent=2)
         
         print(f"✓ Saved fold histories: {output_file.name}")
@@ -346,7 +346,7 @@ class MetricsTracker:
             }
         
         output_file = self.save_dir / filename
-        with open(output_file, 'w') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2)
         
         print(f"✓ Saved training summary: {output_file.name}")

@@ -43,7 +43,7 @@ print("="*100 + "\n")
 
 def load_config(config_path):
     """Load YAML configuration file."""
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 def calculate_pca_dimensions(embedding, pca_config):
@@ -409,7 +409,7 @@ def main():
     }
     
     report_path = output_dir / "preprocessing_report.yaml"
-    with open(report_path, 'w') as f:
+    with open(report_path, 'w', encoding='utf-8') as f:
         yaml.dump(report, f, default_flow_style=False)
     
     print(f"  ✓ Saved: preprocessing_report.yaml")
