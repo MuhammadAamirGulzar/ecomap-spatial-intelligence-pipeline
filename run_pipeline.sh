@@ -17,7 +17,7 @@
 #   No hardcoded paths - everything respects the config
 #
 # Usage:
-#   ./complete_pipeline.sh config/modular_flexible.yaml
+#   ./run_pipeline.sh config/modular_flexible.yaml
 #
 ################################################################################
 

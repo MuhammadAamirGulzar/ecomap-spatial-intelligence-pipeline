@@ -52,10 +52,9 @@ input_dataset:
   label_mapping_file: "./GEO data/input_dataset/label_mapping.json"
   
   # Embedding CSVs (REQUIRED - all must exist)
-  #image_encoder_embeddings: "./GEO data/input_dataset/uni_embeddings_1024d_combined.csv"
-  #image_encoder_embeddings: "/media/hp/ADATA HV300/FYP/Ablation Studies/EcoMap-FYP25/GEO data/input_dataset/CONCH_EMBEDDINGS_COMBINED.CSV"
-  #image_encoder_embeddings: "/media/hp/ADATA HV300/FYP/Ablation Studies/EcoMap-FYP25/GEO data/input_dataset/HOPTIMUS_224__EMBEDDINGS_COMBINED.CSV"
-  image_encoder_embeddings: "/media/hp/ADATA HV300/FYP/Ablation Studies/EcoMap-FYP25/GEO data/input_dataset/HOPTIMUS_512_EMBEDDINGS_COMBINED.CSV"
+  #image_encoder_embeddings: "./GEO data/input_dataset/CONCH_EMBEDDINGS_COMBINED.CSV"
+  #image_encoder_embeddings: "./GEO data/input_dataset/HOPTIMUS_224__EMBEDDINGS_COMBINED.CSV"
+  image_encoder_embeddings: "./GEO data/input_dataset/HOPTIMUS_512_EMBEDDINGS_COMBINED.CSV"
   gene_embeddings: "./GEO data/input_dataset/SCVI_EMBEDDING_COMBINED.CSV"
   cell_composition_embeddings: "./GEO data/input_dataset/CELL_ENCODE_EMBEDDINGS.CSV"
 
@@ -83,10 +82,10 @@ embeddings:
   image_encoder:
     name: "Image Encoder (UNI)"
     file_path: "./GEO data/input_dataset/uni_embeddings_1024d_combined.csv"
-    #file_path: "/media/hp/ADATA HV300/FYP/Ablation Studies/EcoMap-FYP25/GEO data/input_dataset/CONCH_EMBEDDINGS_COMBINED.CSV"
-    #file_path: "/media/hp/ADATA HV300/FYP/Ablation Studies/EcoMap-FYP25/GEO data/input_dataset/HOPTIMUS_512_EMBEDDINGS_COMBINED.CSV"
-    #file_path: "/media/hp/ADATA HV300/FYP/Ablation Studies/EcoMap-FYP25/GEO data/input_dataset/HOPTIMUS_224__EMBEDDINGS_COMBINED.CSV"
-    pca_variance: 0.6             # Keep 95% variance (typically ~150D)
+    #file_path: "./GEO data/input_dataset/CONCH_EMBEDDINGS_COMBINED.CSV"
+    #file_path: "./GEO data/input_dataset/HOPTIMUS_512_EMBEDDINGS_COMBINED.CSV"
+    #file_path: "./GEO data/input_dataset/HOPTIMUS_224__EMBEDDINGS_COMBINED.CSV"
+    pca_variance: 0.6             # Keep 60% variance (typically much lower dimensional)
     description: "Morphological features from image foundation model (e.g., UNI)"
   
   # Gene Expression Encoder (e.g., scVI Latent Space)

@@ -67,7 +67,7 @@ Thumbs.db
 
 # Documentation files (development only)
 *.md
-!README_REPRODUCIBLE.md
+!README.md
 
 # Testing and development scripts
 test_*.py
